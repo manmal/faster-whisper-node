@@ -23,8 +23,8 @@ if (platform === 'darwin' && arch === 'arm64') {
 // Load the native module from crates/engine
 const nativeModule = require(`./crates/engine/${binaryName}`);
 
-// Export Engine class
-const { Engine } = nativeModule;
+// Export Engine and StreamingEngine classes
+const { Engine, StreamingEngine } = nativeModule;
 
 // Export utility functions
 const { 
@@ -45,6 +45,8 @@ const {
 
 module.exports = { 
   Engine,
+  // Streaming transcription (LocalAgreement algorithm)
+  StreamingEngine,
   // Utility functions
   availableModels,
   formatTimestamp,
