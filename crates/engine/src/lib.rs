@@ -7,14 +7,15 @@ mod download;
 mod streaming;
 mod vad;
 mod word_timestamps;
-// TODO: Enable when ort 2.0 API is stable
-// #[cfg(feature = "silero-vad")]
-// mod silero_vad;
+#[cfg(feature = "silero-vad")]
+mod silero_vad;
 
 use napi_derive::napi;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
 
 use vad::{EnergyVad, VadOptions as InternalVadOptions};
+#[cfg(feature = "silero-vad")]
+use silero_vad::{SileroVad, SileroVadConfig};
 use word_timestamps::parse_timestamped_text;
 
 /// Check if Metal (GPU acceleration) is available on macOS
@@ -502,9 +503,51 @@ impl Engine {
         
         // Apply VAD filtering if enabled
         let (processed_samples, vad_offset_map) = if opts.vad_filter.unwrap_or(false) {
-            let vad_opts = self.build_vad_options(opts.vad_options.as_ref());
-            let vad = EnergyVad::new(WHISPER_SAMPLE_RATE, vad_opts);
-            vad.filter_audio(samples)
+            let vad_options = opts.vad_options.as_ref();
+            
+            // Check if Silero VAD is requested and available
+            #[cfg(feature = "silero-vad")]
+            let use_silero = vad_options.and_then(|v| v.use_silero).unwrap_or(false);
+            #[cfg(not(feature = "silero-vad"))]
+            let use_silero = false;
+            
+            if use_silero {
+                #[cfg(feature = "silero-vad")]
+                {
+                    let model_path = vad_options
+                        .and_then(|v| v.silero_model_path.clone())
+                        .unwrap_or_else(|| {
+                            download::default_cache_dir()
+                                .join("silero_vad.onnx")
+                                .to_string_lossy()
+                                .into_owned()
+                        });
+                    
+                    let config = SileroVadConfig {
+                        threshold: vad_options.and_then(|v| v.threshold).unwrap_or(0.5) as f32,
+                        min_speech_duration_ms: vad_options.and_then(|v| v.min_speech_duration_ms).unwrap_or(250),
+                        min_silence_duration_ms: vad_options.and_then(|v| v.min_silence_duration_ms).unwrap_or(100),
+                        speech_pad_ms: vad_options.and_then(|v| v.speech_pad_ms).unwrap_or(30),
+                    };
+                    
+                    let mut silero_vad = SileroVad::new(&model_path, config)
+                        .map_err(|e| napi::Error::from_reason(format!("Failed to load Silero VAD: {}", e)))?;
+                    
+                    silero_vad.filter_audio(samples)
+                        .map_err(|e| napi::Error::from_reason(format!("Silero VAD failed: {}", e)))?
+                }
+                #[cfg(not(feature = "silero-vad"))]
+                {
+                    return Err(napi::Error::from_reason(
+                        "Silero VAD requested but silero-vad feature not enabled".to_string()
+                    ));
+                }
+            } else {
+                // Use energy-based VAD
+                let vad_opts = self.build_vad_options(vad_options);
+                let vad = EnergyVad::new(WHISPER_SAMPLE_RATE, vad_opts);
+                vad.filter_audio(samples)
+            }
         } else {
             (samples.to_vec(), vec![(0.0, 0.0)])
         };

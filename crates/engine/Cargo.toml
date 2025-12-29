@@ -37,9 +37,7 @@ serde_json = "1.0"
 regex = "1.10"
 
 # ONNX Runtime for Silero VAD (optional)
-# TODO: ort 2.0 API has breaking changes, needs updating silero_vad.rs
-# ort = { version = "2.0.0-rc.10", optional = true }
-# ndarray = { version = "0.16", optional = true }
+ort = { version = "2.0.0-rc.10", optional = true }
 
 [build-dependencies]
 napi-build = "2"
@@ -48,5 +46,5 @@ napi-build = "2"
 default = []
 # For Linux/CUDA systems
 cuda = ["whisper-rs/cuda"]
-# Silero VAD neural network support (WIP - needs ort 2.0 API migration)
-# silero-vad = ["ort", "ndarray"]
+# Silero VAD neural network support
+silero-vad = ["ort"]

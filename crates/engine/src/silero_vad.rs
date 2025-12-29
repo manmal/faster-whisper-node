@@ -7,9 +7,9 @@
 //! - Music vs speech distinction
 
 #[cfg(feature = "silero-vad")]
-use ndarray::{Array1, Array2, Array3};
+use ort::session::{builder::GraphOptimizationLevel, Session};
 #[cfg(feature = "silero-vad")]
-use ort::{GraphOptimizationLevel, Session};
+use ort::value::Tensor;
 use std::path::Path;
 
 /// Sample rate expected by Silero VAD
@@ -51,44 +51,49 @@ pub struct SpeechSegment {
     pub end: f64,
 }
 
-/// Silero VAD using ONNX Runtime
+/// Silero VAD using ONNX Runtime 2.0
+/// 
+/// Model inputs:
+/// - input: [batch, samples] - audio samples
+/// - state: [2, batch, 128] - LSTM hidden state
+/// - sr: [] - sample rate (scalar)
+/// 
+/// Model outputs:
+/// - output: [batch, 1] - speech probability
+/// - stateN: [2, batch, 128] - updated LSTM state
 #[cfg(feature = "silero-vad")]
 pub struct SileroVad {
     session: Session,
-    /// LSTM hidden state h (carried across calls)
-    h: Array3<f32>,
-    /// LSTM cell state c (carried across calls)
-    c: Array3<f32>,
+    /// LSTM state (combined h and c) - shape [2, 1, 128]
+    state: Vec<f32>,
     config: SileroVadConfig,
 }
 
 #[cfg(feature = "silero-vad")]
 impl SileroVad {
     /// Load Silero VAD model from ONNX file
-    pub fn new(model_path: impl AsRef<Path>, config: SileroVadConfig) -> Result<Self, ort::Error> {
+    pub fn new(model_path: impl AsRef<Path>, config: SileroVadConfig) -> ort::Result<Self> {
         let session = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(1)?
             .commit_from_file(model_path)?;
 
-        // Initialize hidden states (2 layers, 1 batch, 64 units)
-        let h = Array3::<f32>::zeros((2, 1, 64));
-        let c = Array3::<f32>::zeros((2, 1, 64));
+        // Initialize state: [2, 1, 128] = 256 elements
+        let state = vec![0.0f32; 2 * 1 * 128];
 
-        Ok(Self { session, h, c, config })
+        Ok(Self { session, state, config })
     }
 
     /// Load Silero VAD from embedded model bytes
-    pub fn from_bytes(model_bytes: &[u8], config: SileroVadConfig) -> Result<Self, ort::Error> {
+    pub fn from_bytes(model_bytes: &[u8], config: SileroVadConfig) -> ort::Result<Self> {
         let session = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(1)?
             .commit_from_memory(model_bytes)?;
 
-        let h = Array3::<f32>::zeros((2, 1, 64));
-        let c = Array3::<f32>::zeros((2, 1, 64));
+        let state = vec![0.0f32; 2 * 1 * 128];
 
-        Ok(Self { session, h, c, config })
+        Ok(Self { session, state, config })
     }
 
     /// Process audio chunk and return speech probability
@@ -98,9 +103,9 @@ impl SileroVad {
     ///
     /// # Returns
     /// Speech probability (0.0 to 1.0)
-    pub fn process_chunk(&mut self, samples: &[f32]) -> Result<f32, ort::Error> {
+    pub fn process_chunk(&mut self, samples: &[f32]) -> ort::Result<f32> {
         // Silero expects exactly SILERO_WINDOW_SIZE samples
-        let chunk = if samples.len() < SILERO_WINDOW_SIZE {
+        let chunk: Vec<f32> = if samples.len() < SILERO_WINDOW_SIZE {
             let mut padded = vec![0.0f32; SILERO_WINDOW_SIZE];
             padded[..samples.len()].copy_from_slice(samples);
             padded
@@ -108,37 +113,34 @@ impl SileroVad {
             samples[..SILERO_WINDOW_SIZE].to_vec()
         };
 
-        // Prepare inputs
-        let input = Array2::from_shape_vec((1, SILERO_WINDOW_SIZE), chunk)
-            .map_err(|e| ort::Error::new(format!("Shape error: {}", e)))?;
-
-        let sr = Array1::from_vec(vec![SILERO_SAMPLE_RATE as i64]);
+        // Prepare inputs as Tensors
+        // input: [1, 512]
+        let input = Tensor::from_array(([1, SILERO_WINDOW_SIZE], chunk))?;
+        // state: [2, 1, 128]
+        let state_tensor = Tensor::from_array(([2, 1, 128], self.state.clone()))?;
+        // sr: scalar (0-dimensional, but ort wants 1D with 1 element)
+        let sr = Tensor::from_array(([1], vec![SILERO_SAMPLE_RATE as i64]))?;
 
         // Run inference
         let outputs = self.session.run(ort::inputs![
-            "input" => input.view(),
-            "sr" => sr.view(),
-            "h" => self.h.view(),
-            "c" => self.c.view(),
-        ]?)?;
+            "input" => input,
+            "state" => state_tensor,
+            "sr" => sr,
+        ])?;
 
-        // Update hidden states for next call
-        if let Some(hn) = outputs.get("hn") {
-            let hn_tensor = hn.try_extract_tensor::<f32>()?;
-            self.h = hn_tensor.view().to_owned().into_dimensionality()
-                .map_err(|e| ort::Error::new(format!("Dimension error: {}", e)))?;
-        }
-        if let Some(cn) = outputs.get("cn") {
-            let cn_tensor = cn.try_extract_tensor::<f32>()?;
-            self.c = cn_tensor.view().to_owned().into_dimensionality()
-                .map_err(|e| ort::Error::new(format!("Dimension error: {}", e)))?;
+        // Update state for next call
+        if let Some(state_out) = outputs.get("stateN") {
+            let (_shape, data) = state_out.try_extract_tensor::<f32>()?;
+            if data.len() == self.state.len() {
+                self.state.copy_from_slice(data);
+            }
         }
 
         // Get speech probability
         let output = outputs.get("output")
             .ok_or_else(|| ort::Error::new("Missing output tensor"))?;
-        let prob_tensor = output.try_extract_tensor::<f32>()?;
-        let prob = prob_tensor.view()[[0, 0]];
+        let (_shape, data) = output.try_extract_tensor::<f32>()?;
+        let prob = if !data.is_empty() { data[0] } else { 0.0 };
 
         Ok(prob)
     }
@@ -150,7 +152,7 @@ impl SileroVad {
     ///
     /// # Returns
     /// Vector of detected speech segments
-    pub fn detect_speech(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>, ort::Error> {
+    pub fn detect_speech(&mut self, samples: &[f32]) -> ort::Result<Vec<SpeechSegment>> {
         self.reset();
 
         let window_samples = SILERO_WINDOW_SIZE;
@@ -233,7 +235,7 @@ impl SileroVad {
     ///
     /// # Returns
     /// (filtered_samples, offset_map) where offset_map maps filtered time to original time
-    pub fn filter_audio(&mut self, samples: &[f32]) -> Result<(Vec<f32>, Vec<(f64, f64)>), ort::Error> {
+    pub fn filter_audio(&mut self, samples: &[f32]) -> ort::Result<(Vec<f32>, Vec<(f64, f64)>)> {
         let segments = self.detect_speech(samples)?;
 
         if segments.is_empty() {
@@ -258,8 +260,7 @@ impl SileroVad {
 
     /// Reset hidden state (call between unrelated audio streams)
     pub fn reset(&mut self) {
-        self.h.fill(0.0);
-        self.c.fill(0.0);
+        self.state.fill(0.0);
     }
 }
 
