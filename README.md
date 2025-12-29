@@ -499,6 +499,30 @@ git clone --depth 1 https://huggingface.co/Systran/faster-whisper-tiny tiny
 
 ---
 
+## Performance
+
+Benchmarks on Apple M1 (macOS, arm64, CPU):
+
+| Audio Duration | Transcription Time | Real-Time Factor |
+|----------------|-------------------|------------------|
+| 0.6s | ~550ms | 0.87x |
+| 1.4s | ~580ms | 0.42x |
+| 2.2s | ~590ms | 0.27x |
+
+**RTF < 1 means faster than real-time.**
+
+Tips for best performance:
+- Specify `language: 'en'` to skip auto-detection (~2x faster)
+- Use `beamSize: 1` for greedy search (slightly faster, lower quality)
+- Reuse engine instances (model loading takes ~100ms)
+
+Run benchmarks yourself:
+```bash
+npm run benchmark
+```
+
+---
+
 ## Development
 
 ```bash
@@ -514,7 +538,15 @@ npm run build
 
 # Test
 npm test
+
+# Full test suite
+npm run test:all
+
+# Benchmarks
+npm run benchmark
 ```
+
+See [docs/TESTING.md](./docs/TESTING.md) for detailed testing documentation.
 
 ---
 
