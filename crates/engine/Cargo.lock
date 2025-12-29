@@ -2815,6 +2815,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "regex",
  "reqwest",
  "rubato",
  "serde_json",

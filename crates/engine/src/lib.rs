@@ -4,10 +4,15 @@
 
 mod audio;
 mod download;
+mod vad;
+mod word_timestamps;
 
 use napi_derive::napi;
 use ct2rs::{Whisper, WhisperOptions, Config};
 use ct2rs::sys::{Device, ComputeType};
+
+use vad::{EnergyVad, VadOptions as InternalVadOptions};
+use word_timestamps::parse_timestamped_text;
 
 
 // Re-export download functions
@@ -17,6 +22,20 @@ pub use download::{
     is_model_downloaded,
     available_model_sizes,
 };
+
+/// Word with timing information (for word-level timestamps)
+#[napi(object)]
+#[derive(Clone, Debug)]
+pub struct Word {
+    /// The word text
+    pub word: String,
+    /// Start time in seconds
+    pub start: f64,
+    /// End time in seconds
+    pub end: f64,
+    /// Word probability/confidence (0.0 to 1.0)
+    pub probability: f64,
+}
 
 /// Transcription segment with timing and confidence information
 #[napi(object)]
@@ -42,6 +61,39 @@ pub struct Segment {
     pub compression_ratio: f64,
     /// Probability of no speech
     pub no_speech_prob: f64,
+    /// Word-level timestamps (if wordTimestamps option was enabled)
+    pub words: Option<Vec<Word>>,
+}
+
+/// Voice Activity Detection (VAD) options
+#[napi(object)]
+#[derive(Clone, Debug)]
+pub struct VadOptions {
+    /// Speech detection threshold (0.0 to 1.0, default: 0.5)
+    pub threshold: Option<f64>,
+    /// Minimum speech duration in milliseconds (default: 250)
+    pub min_speech_duration_ms: Option<u32>,
+    /// Maximum speech duration in seconds (default: 30)
+    pub max_speech_duration_s: Option<f64>,
+    /// Minimum silence duration in milliseconds to split segments (default: 2000)
+    pub min_silence_duration_ms: Option<u32>,
+    /// Analysis window size in milliseconds (default: 30)
+    pub window_size_ms: Option<u32>,
+    /// Padding around speech segments in milliseconds (default: 400)
+    pub speech_pad_ms: Option<u32>,
+}
+
+impl Default for VadOptions {
+    fn default() -> Self {
+        Self {
+            threshold: None,
+            min_speech_duration_ms: None,
+            max_speech_duration_s: None,
+            min_silence_duration_ms: None,
+            window_size_ms: None,
+            speech_pad_ms: None,
+        }
+    }
 }
 
 /// Transcription options
@@ -84,6 +136,13 @@ pub struct TranscribeOptions {
     pub log_prob_threshold: Option<f64>,
     /// No speech probability threshold
     pub no_speech_threshold: Option<f64>,
+    /// Enable Voice Activity Detection to filter out silent portions (default: false)
+    pub vad_filter: Option<bool>,
+    /// VAD configuration options
+    pub vad_options: Option<VadOptions>,
+    /// Hallucination silence threshold in seconds (default: None)
+    /// Segments with a silent duration longer than this will be considered hallucinations
+    pub hallucination_silence_threshold: Option<f64>,
 }
 
 impl Default for TranscribeOptions {
@@ -107,6 +166,9 @@ impl Default for TranscribeOptions {
             compression_ratio_threshold: None,
             log_prob_threshold: None,
             no_speech_threshold: None,
+            vad_filter: None,
+            vad_options: None,
+            hallucination_silence_threshold: None,
         }
     }
 }
@@ -148,6 +210,8 @@ pub struct TranscriptionResult {
     pub language_probability: f64,
     /// Total audio duration in seconds
     pub duration: f64,
+    /// Audio duration after VAD filtering (equals duration if VAD not used)
+    pub duration_after_vad: f64,
     /// Full transcribed text (all segments joined)
     pub text: String,
 }
@@ -412,18 +476,30 @@ impl Engine {
         samples: &[f32],
         opts: &TranscribeOptions,
     ) -> napi::Result<TranscriptionResult> {
-        // Calculate duration
+        // Calculate original duration
         let duration = samples.len() as f64 / self.sampling_rate as f64;
+        
+        // Apply VAD filtering if enabled
+        let (processed_samples, vad_offset_map) = if opts.vad_filter.unwrap_or(false) {
+            let vad_opts = self.build_vad_options(opts.vad_options.as_ref());
+            let vad = EnergyVad::new(self.sampling_rate, vad_opts);
+            vad.filter_audio(samples)
+        } else {
+            (samples.to_vec(), vec![(0.0, 0.0)])
+        };
+        
+        let duration_after_vad = processed_samples.len() as f64 / self.sampling_rate as f64;
         
         // Build whisper options
         let whisper_opts = self.build_whisper_options(opts);
         
-        // Determine if we want timestamps
-        let timestamp = opts.word_timestamps.unwrap_or(false);
+        // Determine if we want timestamps (needed for word-level or just segment-level)
+        let want_word_timestamps = opts.word_timestamps.unwrap_or(false);
+        let timestamp = want_word_timestamps;
         
         // Perform transcription
         let results = self.model.generate(
-            samples,
+            &processed_samples,
             opts.language.as_deref(),
             timestamp,
             &whisper_opts,
@@ -433,32 +509,95 @@ impl Engine {
         let mut segments = Vec::new();
         let mut full_text = String::new();
         let samples_per_segment = self.model.n_samples();
+        let use_vad = opts.vad_filter.unwrap_or(false);
+        let hallucination_threshold = opts.hallucination_silence_threshold;
         
         for (idx, result) in results.iter().enumerate() {
-            let text = result.trim().to_string();
-            if !text.is_empty() {
-                let segment_start = (idx * samples_per_segment) as f64 / self.sampling_rate as f64;
-                let segment_end = ((idx + 1) * samples_per_segment) as f64 / self.sampling_rate as f64;
-                let segment_end = segment_end.min(duration);
-                
-                if !full_text.is_empty() {
-                    full_text.push(' ');
-                }
-                full_text.push_str(&text);
-                
-                segments.push(Segment {
-                    id: idx as u32,
-                    seek: (idx * samples_per_segment) as u32,
-                    start: segment_start,
-                    end: segment_end,
-                    text,
-                    tokens: vec![], // ct2rs doesn't expose token IDs directly in generate()
-                    temperature: opts.temperature.unwrap_or(1.0),
-                    avg_logprob: 0.0, // Not available from ct2rs high-level API
-                    compression_ratio: 0.0,
-                    no_speech_prob: 0.0,
-                });
+            let raw_text = result.trim();
+            if raw_text.is_empty() {
+                continue;
             }
+            
+            // Calculate segment timing in filtered audio
+            let filtered_segment_start = (idx * samples_per_segment) as f64 / self.sampling_rate as f64;
+            let filtered_segment_end = ((idx + 1) * samples_per_segment) as f64 / self.sampling_rate as f64;
+            let filtered_segment_end = filtered_segment_end.min(duration_after_vad);
+            
+            // Convert to original audio time if VAD was used
+            let (segment_start, segment_end) = if use_vad {
+                (
+                    vad::restore_timestamp(filtered_segment_start, &vad_offset_map),
+                    vad::restore_timestamp(filtered_segment_end, &vad_offset_map),
+                )
+            } else {
+                (filtered_segment_start, filtered_segment_end)
+            };
+            
+            // Parse word-level timestamps if enabled
+            let (clean_text, words) = if want_word_timestamps {
+                let timed_words = parse_timestamped_text(raw_text);
+                let clean = word_timestamps::clean_transcript(raw_text);
+                
+                // Convert to Word structs and adjust for segment offset and VAD
+                let words: Vec<Word> = timed_words.into_iter().map(|w| {
+                    let word_start = if use_vad {
+                        vad::restore_timestamp(filtered_segment_start + w.start, &vad_offset_map)
+                    } else {
+                        segment_start + w.start
+                    };
+                    let word_end = if use_vad {
+                        vad::restore_timestamp(filtered_segment_start + w.end, &vad_offset_map)
+                    } else {
+                        segment_start + w.end
+                    };
+                    
+                    Word {
+                        word: w.word,
+                        start: word_start,
+                        end: word_end,
+                        probability: w.probability,
+                    }
+                }).collect();
+                
+                (clean, Some(words))
+            } else {
+                (raw_text.to_string(), None)
+            };
+            
+            // Hallucination detection: skip segments with too much silence
+            if let Some(threshold) = hallucination_threshold {
+                let segment_duration = segment_end - segment_start;
+                let text_len = clean_text.split_whitespace().count();
+                
+                // Estimate speaking rate and check for hallucination
+                // Normal speaking is ~150 words/minute = 2.5 words/sec
+                // If segment duration per word is > threshold, likely hallucination
+                if text_len > 0 {
+                    let duration_per_word = segment_duration / text_len as f64;
+                    if duration_per_word > threshold {
+                        continue; // Skip this segment as likely hallucination
+                    }
+                }
+            }
+            
+            if !full_text.is_empty() {
+                full_text.push(' ');
+            }
+            full_text.push_str(&clean_text);
+            
+            segments.push(Segment {
+                id: idx as u32,
+                seek: (idx * samples_per_segment) as u32,
+                start: segment_start,
+                end: segment_end,
+                text: clean_text,
+                tokens: vec![], // ct2rs doesn't expose token IDs directly in generate()
+                temperature: opts.temperature.unwrap_or(1.0),
+                avg_logprob: 0.0, // Not available from ct2rs high-level API
+                compression_ratio: 0.0,
+                no_speech_prob: 0.0,
+                words,
+            });
         }
         
         Ok(TranscriptionResult {
@@ -466,8 +605,37 @@ impl Engine {
             language: opts.language.clone().unwrap_or_else(|| "auto".to_string()),
             language_probability: 0.0, // Would need low-level API for this
             duration,
+            duration_after_vad,
             text: full_text,
         })
+    }
+    
+    // Helper: build VadOptions from JS VadOptions
+    fn build_vad_options(&self, opts: Option<&VadOptions>) -> InternalVadOptions {
+        let mut vad_opts = InternalVadOptions::default();
+        
+        if let Some(o) = opts {
+            if let Some(t) = o.threshold {
+                vad_opts.threshold = t as f32;
+            }
+            if let Some(v) = o.min_speech_duration_ms {
+                vad_opts.min_speech_duration_ms = v;
+            }
+            if let Some(v) = o.max_speech_duration_s {
+                vad_opts.max_speech_duration_s = v as f32;
+            }
+            if let Some(v) = o.min_silence_duration_ms {
+                vad_opts.min_silence_duration_ms = v;
+            }
+            if let Some(v) = o.window_size_ms {
+                vad_opts.window_size_ms = v;
+            }
+            if let Some(v) = o.speech_pad_ms {
+                vad_opts.speech_pad_ms = v;
+            }
+        }
+        
+        vad_opts
     }
 
     // Helper: build WhisperOptions from TranscribeOptions
