@@ -1123,7 +1123,9 @@ impl StreamingEngine {
         let mut preview_text = String::new();
         let mut last_stable_end_time = 0.0f64;
         
-        // Process results
+        // Process results using TOKEN-LEVEL stability (AlignAtt approximation)
+        // Instead of checking entire segments, we check each token's t1 timestamp.
+        // This allows emitting partial segments when only some tokens are stable.
         let num_segments = state.full_n_segments();
         
         for i in 0..num_segments {
@@ -1132,38 +1134,74 @@ impl StreamingEngine {
                 None => continue,
             };
             
-            let text = match segment.to_str_lossy() {
-                Ok(t) => t.into_owned(),
-                Err(_) => continue,
-            };
+            let segment_start = segment.start_timestamp() as f64 / 100.0;
+            let num_tokens = segment.n_tokens();
             
-            let raw_text = text.trim();
-            if raw_text.is_empty() {
+            if num_tokens == 0 {
                 continue;
             }
             
-            let start_ts = segment.start_timestamp();
-            let end_ts = segment.end_timestamp();
+            // Token-level stability check
+            let mut stable_token_text = String::new();
+            let mut preview_token_text = String::new();
+            let mut last_stable_token_end = segment_start;
+            let mut first_stable_token_start: Option<f64> = None;
+            let mut hit_unstable = false;
             
-            // Convert from centiseconds to seconds
-            let segment_start = start_ts as f64 / 100.0;
-            let segment_end = end_ts as f64 / 100.0;
+            for j in 0..num_tokens {
+                let token = match segment.get_token(j) {
+                    Some(t) => t,
+                    None => continue,
+                };
+                
+                let token_text = match token.to_str_lossy() {
+                    Ok(t) => t.into_owned(),
+                    Err(_) => continue,
+                };
+                
+                // Skip special tokens
+                if token_text.starts_with('[') || token_text.starts_with('<') {
+                    continue;
+                }
+                
+                let token_data = token.token_data();
+                let token_end = token_data.t1 as f64 / 100.0;  // centiseconds to seconds
+                let token_start = token_data.t0 as f64 / 100.0;
+                
+                if !hit_unstable && stability_cutoff > 0.0 && token_end <= stability_cutoff {
+                    // This token is stable
+                    stable_token_text.push_str(&token_text);
+                    last_stable_token_end = token_end;
+                    if first_stable_token_start.is_none() {
+                        first_stable_token_start = Some(token_start);
+                    }
+                } else {
+                    // This token (and all following) are unstable
+                    hit_unstable = true;
+                    preview_token_text.push_str(&token_text);
+                }
+            }
             
-            if stability_cutoff > 0.0 && segment_end <= stability_cutoff {
-                // Stable segment
+            // Add stable tokens as a segment
+            let stable_trimmed = stable_token_text.trim();
+            if !stable_trimmed.is_empty() {
+                let start_time = first_stable_token_start.unwrap_or(segment_start);
                 stable_segments.push(StreamingSegment {
-                    text: raw_text.to_string(),
-                    start: audio_offset + segment_start,
-                    end: audio_offset + segment_end,
+                    text: stable_trimmed.to_string(),
+                    start: audio_offset + start_time,
+                    end: audio_offset + last_stable_token_end,
                     is_final: true,
                 });
-                last_stable_end_time = segment_end;
-            } else {
-                // Preview segment
+                last_stable_end_time = last_stable_token_end;
+            }
+            
+            // Add unstable tokens to preview
+            let preview_trimmed = preview_token_text.trim();
+            if !preview_trimmed.is_empty() {
                 if !preview_text.is_empty() {
                     preview_text.push(' ');
                 }
-                preview_text.push_str(raw_text);
+                preview_text.push_str(preview_trimmed);
             }
         }
         
