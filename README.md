@@ -14,6 +14,10 @@ Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engi
 - **Auto-download models** — Just specify a model name, it downloads automatically
 - **Multi-format audio** — WAV, MP3, FLAC, OGG, and more (via symphonia)
 - **Structured output** — Get segments with timestamps, confidence scores, and metadata
+- **Word-level timestamps** — Get precise timing for each word
+- **Voice Activity Detection** — Filter out silent portions of audio
+- **Hallucination detection** — Skip segments that appear to be hallucinations
+- **GPU auto-detection** — Automatically use CUDA if available
 - **Transcription options** — Beam size, temperature, language, and more
 - **Multiple input formats** — File paths, Buffers, or raw samples
 - **Stereo support** — Automatically converts stereo to mono and resamples to 16kHz
@@ -50,6 +54,34 @@ const result2 = engine.transcribeFile('./audio.wav', {
   beamSize: 5,
   temperature: 0.0
 });
+
+// Word-level timestamps
+const result3 = engine.transcribeFile('./audio.wav', {
+  wordTimestamps: true
+});
+for (const segment of result3.segments) {
+  if (segment.words) {
+    for (const word of segment.words) {
+      console.log(`${word.word} @ ${formatTimestamp(word.start)}`);
+    }
+  }
+}
+
+// VAD filtering (skip silent portions)
+const result4 = engine.transcribeFile('./audio.wav', {
+  vadFilter: true,
+  vadOptions: {
+    threshold: 0.5,
+    minSpeechDurationMs: 250
+  }
+});
+
+// GPU auto-detection
+const { isGpuAvailable, getBestDevice } = require('faster-whisper-node');
+console.log(`GPU available: ${isGpuAvailable()}`);
+console.log(`Best device: ${getBestDevice()}`);
+
+const gpuEngine = Engine.withOptions('tiny', { device: 'auto' }); // Uses GPU if available
 ```
 
 ---
@@ -288,6 +320,20 @@ Returns number of supported languages.
 | `compressionRatioThreshold` | `number` | `2.4` | Compression ratio threshold |
 | `logProbThreshold` | `number` | `-1.0` | Log probability threshold |
 | `noSpeechThreshold` | `number` | `0.6` | No speech probability threshold |
+| `vadFilter` | `boolean` | `false` | Enable Voice Activity Detection |
+| `vadOptions` | `VadOptions` | - | VAD configuration options |
+| `hallucinationSilenceThreshold` | `number` | - | Skip segments with silence > threshold |
+
+#### VadOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `threshold` | `number` | `0.5` | Speech detection threshold (0.0 to 1.0) |
+| `minSpeechDurationMs` | `number` | `250` | Minimum speech duration in ms |
+| `maxSpeechDurationS` | `number` | `30` | Maximum speech duration in seconds |
+| `minSilenceDurationMs` | `number` | `2000` | Minimum silence to split segments |
+| `windowSizeMs` | `number` | `30` | Analysis window size in ms |
+| `speechPadMs` | `number` | `400` | Padding around speech segments |
 
 #### TranscriptionResult
 
@@ -297,6 +343,7 @@ interface TranscriptionResult {
   language: string;
   languageProbability: number;
   duration: number;
+  durationAfterVad: number;  // Duration after VAD filtering
   text: string;
 }
 ```
@@ -315,6 +362,18 @@ interface Segment {
   avgLogprob: number;
   compressionRatio: number;
   noSpeechProb: number;
+  words?: Word[];  // Word-level timestamps (if enabled)
+}
+```
+
+#### Word
+
+```typescript
+interface Word {
+  word: string;
+  start: number;      // seconds
+  end: number;        // seconds
+  probability: number;
 }
 ```
 
@@ -337,6 +396,40 @@ Format seconds to timestamp string.
 formatTimestamp(65.5);       // "01:05.500"
 formatTimestamp(65.5, true); // "00:01:05.500"
 formatTimestamp(3661.5);     // "01:01:01.500"
+```
+
+### GPU Detection
+
+```javascript
+const { isGpuAvailable, getGpuCount, getBestDevice } = require('faster-whisper-node');
+```
+
+#### `isGpuAvailable(): boolean`
+
+Check if CUDA (GPU acceleration) is available.
+
+```typescript
+if (isGpuAvailable()) {
+  console.log('GPU available, using CUDA');
+}
+```
+
+#### `getGpuCount(): number`
+
+Get the number of available CUDA devices.
+
+```typescript
+console.log(`Found ${getGpuCount()} GPUs`);
+```
+
+#### `getBestDevice(): string`
+
+Get the best available device ("cuda" if GPU available, otherwise "cpu").
+
+```typescript
+const engine = Engine.withOptions('tiny', { device: getBestDevice() });
+// Or simply use 'auto':
+const engine2 = Engine.withOptions('tiny', { device: 'auto' });
 ```
 
 ---
