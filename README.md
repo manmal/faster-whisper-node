@@ -25,7 +25,7 @@ Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engi
 
 **This package provides the same CTranslate2 inference speed with zero Python dependencies.**
 
-> **⚠️ Current Limitations:** This package currently provides **plain text transcription only**. Advanced features available in the Python version (timestamps, word-level confidence, VAD, streaming) are not yet exposed. Audio must be pre-converted to 16kHz mono WAV format (e.g., using `ffmpeg`).
+> **Note:** Audio must be pre-converted to 16kHz mono WAV format (e.g., using `ffmpeg`).
 
 ## Relationship to faster-whisper
 
@@ -54,10 +54,9 @@ graph TB
 | Use Case | Recommended |
 |----------|-------------|
 | Python application | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Node.js/Electron app (plain text) | **faster-whisper-node** |
+| Node.js/Electron app | **faster-whisper-node** |
 | Python scripts & notebooks | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Need timestamps/subtitles (SRT/VTT) | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Need word-level confidence/VAD | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
+| Need rich Python ecosystem | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
 | Shipping desktop app without Python | **faster-whisper-node** |
 | Serverless/container with Node.js | **faster-whisper-node** |
 
