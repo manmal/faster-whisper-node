@@ -48,6 +48,14 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -61,29 +69,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.platform }}-cargo-
 
-      - name: Download prebuilt CTranslate2
-        shell: bash
-        run: ./scripts/download-prebuilt.sh ${{ matrix.platform }}
-
       - name: Install dependencies
         run: npm ci || npm install
 
       - name: Build
-        run: npm run build
-
-      - name: Copy libs to module directory (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cd crates/engine
-          cp ../../lib_build/lib/libctranslate2.so* ./
-          cp ../../lib_build/lib/libgomp.so.1 ./ 2>/dev/null || true
-
-      - name: Copy libs to module directory (Windows)
-        if: runner.os == 'Windows'
         shell: bash
         run: |
-          cd crates/engine
-          cp ../../lib_build/lib/*.dll ./
+          # macOS needs OpenMP flags
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            export CXXFLAGS="-I$(brew --prefix libomp)/include"
+            export LDFLAGS="-L$(brew --prefix libomp)/lib"
+          fi
+          npm run build
 
       - name: Download test model
         shell: bash
@@ -91,8 +88,13 @@ jobs:
           mkdir -p models/tiny
           cd models/tiny
           
+          # Use -L to follow redirects and -f to fail on HTTP errors
           for file in model.bin config.json tokenizer.json vocabulary.json; do
-            curl -sLO "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/$file"
+            echo "Downloading $file..."
+            curl -fLO "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/$file" || {
+              echo "Failed to download $file"
+              exit 1
+            }
           done
           
           cat > preprocessor_config.json << 'PREPROC'
@@ -111,30 +113,18 @@ jobs:
             "sampling_rate": 16000
           }
           PREPROC
+          
+          echo "Model files downloaded:"
+          ls -la
 
       - name: Run smoke test
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            export LD_LIBRARY_PATH=$PWD/crates/engine:$LD_LIBRARY_PATH
-          fi
-          npm test
+        run: npm test
 
       - name: Run unit tests
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            export LD_LIBRARY_PATH=$PWD/crates/engine:$LD_LIBRARY_PATH
-          fi
-          npm run test:unit
+        run: npm run test:unit
 
       - name: Run E2E tests
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            export LD_LIBRARY_PATH=$PWD/crates/engine:$LD_LIBRARY_PATH
-          fi
-          npm run test:e2e
+        run: npm run test:e2e
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -143,7 +133,4 @@ jobs:
           name: binaries-${{ matrix.platform }}
           path: |
             crates/engine/*.node
-            crates/engine/*.dylib
-            crates/engine/*.so*
-            crates/engine/*.dll
           retention-days: 7

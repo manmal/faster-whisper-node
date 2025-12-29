@@ -44,45 +44,31 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download prebuilt CTranslate2
-        shell: bash
-        run: ./scripts/download-prebuilt.sh ${{ matrix.platform }}
+      - name: Install OpenMP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake
 
       - name: Install dependencies
         run: npm ci || npm install
 
       - name: Build
-        run: npm run build
-
-      - name: Copy libs (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cd crates/engine
-          cp ../../lib_build/lib/libctranslate2.so* ./
-          cp ../../lib_build/lib/libgomp.so.1 ./ 2>/dev/null || true
-
-      - name: Copy libs (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: cp lib_build/lib/*.dll crates/engine/
-
-      - name: Package
         shell: bash
         run: |
-          mkdir -p dist
-          cd crates/engine
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            7z a ../../dist/binaries-${{ matrix.platform }}.zip *.node *.dll
-          else
-            tar -czvf ../../dist/binaries-${{ matrix.platform }}.tar.gz *.node *.dylib *.so* 2>/dev/null || \
-            tar -czvf ../../dist/binaries-${{ matrix.platform }}.tar.gz *.node *.dylib 2>/dev/null || \
-            tar -czvf ../../dist/binaries-${{ matrix.platform }}.tar.gz *.node *.so* 2>/dev/null
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            export CXXFLAGS="-I$(brew --prefix libomp)/include"
+            export LDFLAGS="-L$(brew --prefix libomp)/lib"
           fi
+          npm run build
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.platform }}
-          path: dist/
+          path: crates/engine/*.node
 
   publish:
     needs: build
@@ -90,28 +76,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Display artifacts
-        run: ls -R artifacts
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
-          generate_release_notes: true
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      # Note: npm publish requires NPM_TOKEN secret
-      # - name: Publish to npm
-      #   run: npm publish
-      #   env:
-      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Move binaries to correct location
+        run: |
+          mkdir -p crates/engine
+          for dir in artifacts/binaries-*/; do
+            cp "$dir"*.node crates/engine/ 2>/dev/null || true
+          done
+          ls -la crates/engine/
+
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
