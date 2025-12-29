@@ -21,15 +21,8 @@ crates/engine/*.dll
 coverage/
 
 # Models (too large for git)
-models/*/model.bin
-models/*/pytorch_model.bin
-models/*/*.safetensors
-
-# Keep model configs
-!models/*/config.json
-!models/*/tokenizer.json
-!models/*/vocabulary.json
-!models/*/preprocessor_config.json
+# Users should download models separately
+models/
 
 # Temporary files
 *.tmp

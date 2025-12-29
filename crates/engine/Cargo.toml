@@ -10,7 +10,9 @@ crate-type = ["cdylib"]
 napi = { version = "2.12", features = ["async"] }
 napi-derive = "2.12"
 # We use ct2rs to generate safe bindings to the C++ lib
-ct2rs = { version = "0.9.14", features = ["whisper"] } 
+# The "system" feature tells ct2rs to link against a pre-installed CTranslate2
+# instead of building it from source (we provide our own prebuilt libraries)
+ct2rs = { version = "0.9.14", default-features = false, features = ["whisper", "system"] } 
 anyhow = "1.0"
 
 [build-dependencies]

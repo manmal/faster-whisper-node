@@ -23,30 +23,38 @@ switch (platform) {
     process.exit(0);
 }
 
+// Helper to copy files (following symlinks to get the real file)
+function copyLibrary(src, dstName) {
+  const dst = path.join(engineDir, dstName);
+  const realSrc = fs.realpathSync(src);
+  fs.copyFileSync(realSrc, dst);
+  console.log(`✅ Copied ${path.basename(realSrc)} -> ${dstName}`);
+  return true;
+}
+
 // Copy libraries
 let copied = false;
 for (const pattern of libPatterns) {
   if (pattern.includes('*')) {
     // Glob pattern - list files
     const files = fs.readdirSync(libDir).filter(f => {
-      const regex = new RegExp('^' + pattern.replace('*', '.*') + '$');
+      const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
       return regex.test(f);
     });
-    for (const file of files) {
+    // Filter to just real files (not symlinks)
+    const realFiles = files.filter(f => {
+      const stat = fs.lstatSync(path.join(libDir, f));
+      return !stat.isSymbolicLink();
+    });
+    for (const file of realFiles) {
       const src = path.join(libDir, file);
-      const dst = path.join(engineDir, file);
-      fs.copyFileSync(src, dst);
-      console.log(`✅ Copied ${file} to ${engineDir}`);
-      copied = true;
+      copied = copyLibrary(src, file) || copied;
     }
   } else {
-    // Exact name
+    // Exact name - follow symlinks
     const src = path.join(libDir, pattern);
     if (fs.existsSync(src)) {
-      const dst = path.join(engineDir, pattern);
-      fs.copyFileSync(src, dst);
-      console.log(`✅ Copied ${pattern} to ${engineDir}`);
-      copied = true;
+      copied = copyLibrary(src, pattern) || copied;
     }
   }
 }

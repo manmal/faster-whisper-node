@@ -92,11 +92,18 @@ case "$PLATFORM" in
         if [ -n "$MAIN_LIB" ]; then
             cp "$MAIN_LIB" "$LIB_DIR/libctranslate2.${CTRANSLATE2_VERSION}.dylib"
             cd "$LIB_DIR"
+            
+            # Fix the install name so it can be found via @rpath or @loader_path
+            install_name_tool -id "@rpath/libctranslate2.dylib" "libctranslate2.${CTRANSLATE2_VERSION}.dylib"
+            
+            # Re-sign the library (code signature invalidated by install_name_tool)
+            codesign --force -s - "libctranslate2.${CTRANSLATE2_VERSION}.dylib" 2>/dev/null || true
+            
             ln -sf "libctranslate2.${CTRANSLATE2_VERSION}.dylib" "libctranslate2.4.dylib"
             ln -sf "libctranslate2.4.dylib" "libctranslate2.dylib"
             cd - > /dev/null
         fi
-        echo "   Copied dylib to $LIB_DIR"
+        echo "   Copied and fixed dylib install name in $LIB_DIR"
         ;;
     linux-*)
         # Linux: .so files are in ctranslate2.libs/
