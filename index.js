@@ -61,3 +61,10 @@ module.exports = {
   getGpuCount,
   getBestDevice,
 };
+
+// Add streaming utilities after export (avoid circular dependency)
+// These are standalone modules that import from this file
+module.exports.StreamingBatcher = require('./streaming-batcher.js').StreamingBatcher;
+module.exports.createBatcher = require('./streaming-batcher.js').createBatcher;
+module.exports.WorkerPoolBatcher = require('./worker-pool-batcher.js').WorkerPoolBatcher;
+module.exports.createWorkerPool = require('./worker-pool-batcher.js').createWorkerPool;
