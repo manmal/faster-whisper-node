@@ -310,8 +310,14 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Engine, availableModels, formatTimestamp } = nativeBinding
+const { Engine, availableModels, isModelAvailable, getModelPath, getCacheDir, downloadModel, decodeAudio, decodeAudioBuffer, formatTimestamp } = nativeBinding
 
 module.exports.Engine = Engine
 module.exports.availableModels = availableModels
+module.exports.isModelAvailable = isModelAvailable
+module.exports.getModelPath = getModelPath
+module.exports.getCacheDir = getCacheDir
+module.exports.downloadModel = downloadModel
+module.exports.decodeAudio = decodeAudio
+module.exports.decodeAudioBuffer = decodeAudioBuffer
 module.exports.formatTimestamp = formatTimestamp

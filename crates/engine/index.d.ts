@@ -48,8 +48,22 @@ export interface TranscribeOptions {
   suppressBlank?: boolean
   /** Maximum generation length (default: 448) */
   maxLength?: number
-  /** Include timestamps in output (default: false) */
+  /** Include word-level timestamps (default: false) */
   wordTimestamps?: boolean
+  /** Initial prompt to provide context */
+  initialPrompt?: string
+  /** Prefix for the first segment */
+  prefix?: string
+  /** Suppress tokens (comma-separated IDs or special tokens) */
+  suppressTokens?: string
+  /** Apply condition on previous text (default: true) */
+  conditionOnPreviousText?: boolean
+  /** Compression ratio threshold for detecting failed decodings */
+  compressionRatioThreshold?: number
+  /** Log probability threshold for detecting failed decodings */
+  logProbThreshold?: number
+  /** No speech probability threshold */
+  noSpeechThreshold?: number
 }
 /** Model configuration options */
 export interface ModelOptions {
@@ -59,6 +73,8 @@ export interface ModelOptions {
   computeType?: string
   /** Number of CPU threads per replica (0 for auto) */
   cpuThreads?: number
+  /** Custom cache directory for auto-downloaded models */
+  cacheDir?: string
 }
 /** Transcription result containing all segments and metadata */
 export interface TranscriptionResult {
@@ -73,25 +89,74 @@ export interface TranscriptionResult {
   /** Full transcribed text (all segments joined) */
   text: string
 }
+/** Language detection result */
+export interface LanguageDetectionResult {
+  /** Detected language code */
+  language: string
+  /** Detection probability */
+  probability: number
+}
+/** Download progress information */
+export interface DownloadProgress {
+  /** Current progress percentage (0-100) */
+  percent: number
+  /** Current file being downloaded */
+  currentFile: string
+  /** Total files to download */
+  totalFiles: number
+  /** Current file index */
+  currentIndex: number
+}
 /** Get list of supported model size aliases */
 export declare function availableModels(): Array<string>
+/** Check if a model is downloaded */
+export declare function isModelAvailable(size: string): boolean
+/** Get the path where a model would be stored */
+export declare function getModelPath(size: string): string
+/** Get the default cache directory for models */
+export declare function getCacheDir(): string
+/**
+ * Download a model (async)
+ * Returns the path to the downloaded model
+ */
+export declare function downloadModel(size: string, cacheDir?: string | undefined | null): Promise<string>
+/** Decode audio file to raw samples (16kHz mono Float32) */
+export declare function decodeAudio(path: string): Array<number>
+/** Decode audio buffer to raw samples (16kHz mono Float32) */
+export declare function decodeAudioBuffer(buffer: Buffer): Array<number>
 /** Format seconds to timestamp string (HH:MM:SS.mmm or MM:SS.mmm) */
 export declare function formatTimestamp(seconds: number, alwaysIncludeHours?: boolean | undefined | null): string
 export declare class Engine {
-  /** Create a new transcription engine from a model path */
+  /**
+   * Create a new transcription engine from a model path or size
+   *
+   * # Arguments
+   * * `model_path` - Either a path to a CTranslate2 model directory, or a model size
+   *                  alias ("tiny", "base", "small", "medium", "large-v2", "large-v3")
+   */
   constructor(modelPath: string)
   /** Create a new transcription engine with options */
   static withOptions(modelPath: string, options?: ModelOptions | undefined | null): Engine
-  /** Transcribe audio file and return structured segments */
+  /** Transcribe audio file (supports WAV, MP3, FLAC, OGG, M4A) */
+  transcribeFile(audioPath: string, options?: TranscribeOptions | undefined | null): TranscriptionResult
+  /** Legacy: transcribe from WAV file path, returns structured segments */
   transcribeSegments(audioPath: string, options?: TranscribeOptions | undefined | null): TranscriptionResult
   /** Simple transcription returning just the text (backward compatible) */
   transcribe(audioFile: string): string
   /** Transcribe with options, returning just the text */
   transcribeWithOptions(audioFile: string, options: TranscribeOptions): string
-  /** Transcribe from a Buffer containing WAV audio data */
+  /** Transcribe from a Buffer containing audio data (any supported format) */
   transcribeBuffer(buffer: Buffer, options?: TranscribeOptions | undefined | null): TranscriptionResult
   /** Transcribe from raw Float32Array samples (must be 16kHz mono, normalized to [-1, 1]) */
   transcribeSamples(samples: Array<number>, options?: TranscribeOptions | undefined | null): TranscriptionResult
+  /**
+   * Detect the language of audio
+   * Note: This performs a quick transcription to detect language.
+   * For efficiency, only the first 30 seconds are analyzed.
+   */
+  detectLanguage(audioPath: string): LanguageDetectionResult
+  /** Detect language from buffer */
+  detectLanguageBuffer(buffer: Buffer): LanguageDetectionResult
   /** Get the expected sampling rate (16000 Hz for Whisper) */
   samplingRate(): number
   /** Check if the model is multilingual */

@@ -27,10 +27,29 @@ const nativeModule = require(`./crates/engine/${binaryName}`);
 const { Engine } = nativeModule;
 
 // Export utility functions
-const { availableModels, formatTimestamp } = nativeModule;
+const { 
+  availableModels, 
+  formatTimestamp,
+  // Phase 2 additions
+  isModelAvailable,
+  getModelPath,
+  getCacheDir,
+  downloadModel,
+  decodeAudio,
+  decodeAudioBuffer,
+} = nativeModule;
 
 module.exports = { 
   Engine,
+  // Utility functions
   availableModels,
-  formatTimestamp
+  formatTimestamp,
+  // Model management
+  isModelAvailable,
+  getModelPath,
+  getCacheDir,
+  downloadModel,
+  // Audio decoding
+  decodeAudio,
+  decodeAudioBuffer,
 };

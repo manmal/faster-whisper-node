@@ -1,8 +1,22 @@
+//! faster-whisper-node engine
+//!
+//! High-performance Whisper transcription for Node.js via CTranslate2.
+
+mod audio;
+mod download;
+
 use napi_derive::napi;
 use ct2rs::{Whisper, WhisperOptions, Config};
 use ct2rs::sys::{Device, ComputeType};
-use std::fs::File;
-use std::io::Read;
+
+
+// Re-export download functions
+pub use download::{
+    default_cache_dir, 
+    model_path_for_size, 
+    is_model_downloaded,
+    available_model_sizes,
+};
 
 /// Transcription segment with timing and confidence information
 #[napi(object)]
@@ -54,8 +68,22 @@ pub struct TranscribeOptions {
     pub suppress_blank: Option<bool>,
     /// Maximum generation length (default: 448)
     pub max_length: Option<u32>,
-    /// Include timestamps in output (default: false)
+    /// Include word-level timestamps (default: false)
     pub word_timestamps: Option<bool>,
+    /// Initial prompt to provide context
+    pub initial_prompt: Option<String>,
+    /// Prefix for the first segment
+    pub prefix: Option<String>,
+    /// Suppress tokens (comma-separated IDs or special tokens)
+    pub suppress_tokens: Option<String>,
+    /// Apply condition on previous text (default: true)
+    pub condition_on_previous_text: Option<bool>,
+    /// Compression ratio threshold for detecting failed decodings
+    pub compression_ratio_threshold: Option<f64>,
+    /// Log probability threshold for detecting failed decodings
+    pub log_prob_threshold: Option<f64>,
+    /// No speech probability threshold
+    pub no_speech_threshold: Option<f64>,
 }
 
 impl Default for TranscribeOptions {
@@ -72,6 +100,13 @@ impl Default for TranscribeOptions {
             suppress_blank: None,
             max_length: None,
             word_timestamps: None,
+            initial_prompt: None,
+            prefix: None,
+            suppress_tokens: None,
+            condition_on_previous_text: None,
+            compression_ratio_threshold: None,
+            log_prob_threshold: None,
+            no_speech_threshold: None,
         }
     }
 }
@@ -86,6 +121,8 @@ pub struct ModelOptions {
     pub compute_type: Option<String>,
     /// Number of CPU threads per replica (0 for auto)
     pub cpu_threads: Option<u32>,
+    /// Custom cache directory for auto-downloaded models
+    pub cache_dir: Option<String>,
 }
 
 impl Default for ModelOptions {
@@ -94,6 +131,7 @@ impl Default for ModelOptions {
             device: None,
             compute_type: None,
             cpu_threads: None,
+            cache_dir: None,
         }
     }
 }
@@ -114,6 +152,30 @@ pub struct TranscriptionResult {
     pub text: String,
 }
 
+/// Language detection result
+#[napi(object)]
+#[derive(Clone, Debug)]
+pub struct LanguageDetectionResult {
+    /// Detected language code
+    pub language: String,
+    /// Detection probability
+    pub probability: f64,
+}
+
+/// Download progress information
+#[napi(object)]
+#[derive(Clone, Debug)]
+pub struct DownloadProgress {
+    /// Current progress percentage (0-100)
+    pub percent: f64,
+    /// Current file being downloaded
+    pub current_file: String,
+    /// Total files to download
+    pub total_files: u32,
+    /// Current file index
+    pub current_index: u32,
+}
+
 #[napi]
 pub struct Engine {
     model: Whisper,
@@ -122,7 +184,11 @@ pub struct Engine {
 
 #[napi]
 impl Engine {
-    /// Create a new transcription engine from a model path
+    /// Create a new transcription engine from a model path or size
+    /// 
+    /// # Arguments
+    /// * `model_path` - Either a path to a CTranslate2 model directory, or a model size 
+    ///                  alias ("tiny", "base", "small", "medium", "large-v2", "large-v3")
     #[napi(constructor)]
     pub fn new(model_path: String) -> napi::Result<Self> {
         Self::with_options(model_path, None)
@@ -132,6 +198,23 @@ impl Engine {
     #[napi(factory)]
     pub fn with_options(model_path: String, options: Option<ModelOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_default();
+        
+        // Resolve path (could be alias like "tiny" or actual path)
+        let resolved_path = download::resolve_model_path(&model_path);
+        
+        // Check if model exists
+        if !std::path::Path::new(&resolved_path).exists() {
+            // Check if it's a known alias that needs downloading
+            if download::get_repo_for_size(&model_path).is_some() {
+                return Err(napi::Error::from_reason(format!(
+                    "Model '{}' not found. Download it first using: await downloadModel('{}')",
+                    model_path, model_path
+                )));
+            }
+            return Err(napi::Error::from_reason(format!(
+                "Model not found at: {}", resolved_path
+            )));
+        }
         
         let device = match opts.device.as_deref() {
             Some("cuda") | Some("CUDA") => Device::CUDA,
@@ -156,7 +239,7 @@ impl Engine {
             ..Config::default()
         };
         
-        let model = Whisper::new(&model_path, config)
+        let model = Whisper::new(&resolved_path, config)
             .map_err(|e| napi::Error::from_reason(format!("Failed to load model: {}", e)))?;
         
         let sampling_rate = model.sampling_rate() as u32;
@@ -164,24 +247,35 @@ impl Engine {
         Ok(Self { model, sampling_rate })
     }
 
-    /// Transcribe audio file and return structured segments
+    /// Transcribe audio file (supports WAV, MP3, FLAC, OGG, M4A)
+    #[napi]
+    pub fn transcribe_file(
+        &self,
+        audio_path: String,
+        options: Option<TranscribeOptions>,
+    ) -> napi::Result<TranscriptionResult> {
+        let opts = options.unwrap_or_default();
+        
+        let samples = audio::decode_audio_file(&audio_path)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio: {}", e)))?;
+        
+        self.transcribe_samples_internal(&samples, &opts)
+    }
+
+    /// Legacy: transcribe from WAV file path, returns structured segments
     #[napi]
     pub fn transcribe_segments(
         &self,
         audio_path: String,
         options: Option<TranscribeOptions>,
     ) -> napi::Result<TranscriptionResult> {
-        let opts = options.unwrap_or_default();
-        let samples = read_wav_samples(&audio_path)
-            .map_err(|e| napi::Error::from_reason(format!("Failed to read audio: {}", e)))?;
-        
-        self.transcribe_samples_internal(&samples, &opts)
+        self.transcribe_file(audio_path, options)
     }
 
     /// Simple transcription returning just the text (backward compatible)
     #[napi]
     pub fn transcribe(&self, audio_file: String) -> napi::Result<String> {
-        let result = self.transcribe_segments(audio_file, None)?;
+        let result = self.transcribe_file(audio_file, None)?;
         Ok(result.text)
     }
 
@@ -192,11 +286,11 @@ impl Engine {
         audio_file: String,
         options: TranscribeOptions,
     ) -> napi::Result<String> {
-        let result = self.transcribe_segments(audio_file, Some(options))?;
+        let result = self.transcribe_file(audio_file, Some(options))?;
         Ok(result.text)
     }
 
-    /// Transcribe from a Buffer containing WAV audio data
+    /// Transcribe from a Buffer containing audio data (any supported format)
     #[napi]
     pub fn transcribe_buffer(
         &self,
@@ -204,8 +298,9 @@ impl Engine {
         options: Option<TranscribeOptions>,
     ) -> napi::Result<TranscriptionResult> {
         let opts = options.unwrap_or_default();
-        let samples = parse_wav_buffer(&buffer)
-            .map_err(|e| napi::Error::from_reason(format!("Failed to parse audio buffer: {}", e)))?;
+        
+        let samples = audio::decode_audio_buffer(&buffer)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio buffer: {}", e)))?;
         
         self.transcribe_samples_internal(&samples, &opts)
     }
@@ -222,6 +317,75 @@ impl Engine {
         let samples_f32: Vec<f32> = samples.iter().map(|&x| x as f32).collect();
         
         self.transcribe_samples_internal(&samples_f32, &opts)
+    }
+
+    /// Detect the language of audio
+    /// Note: This performs a quick transcription to detect language.
+    /// For efficiency, only the first 30 seconds are analyzed.
+    #[napi]
+    pub fn detect_language(
+        &self,
+        audio_path: String,
+    ) -> napi::Result<LanguageDetectionResult> {
+        if !self.model.is_multilingual() {
+            return Err(napi::Error::from_reason(
+                "Language detection requires a multilingual model (not .en variants)"
+            ));
+        }
+        
+        let samples = audio::decode_audio_file(&audio_path)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio: {}", e)))?;
+        
+        // Use first 30 seconds max
+        let max_samples = (30.0 * self.sampling_rate as f64) as usize;
+        let detection_samples: &[f32] = if samples.len() > max_samples {
+            &samples[..max_samples]
+        } else {
+            &samples
+        };
+        
+        // Do a quick transcription with language=None to trigger auto-detection
+        let opts = TranscribeOptions::default();
+        let result = self.transcribe_samples_internal(detection_samples, &opts)?;
+        
+        // Language is detected automatically during transcription
+        // For proper language detection we'd need direct access to the detection layer
+        // For now, return the language from transcription
+        Ok(LanguageDetectionResult {
+            language: result.language,
+            probability: result.language_probability,
+        })
+    }
+
+    /// Detect language from buffer
+    #[napi]
+    pub fn detect_language_buffer(
+        &self,
+        buffer: napi::bindgen_prelude::Buffer,
+    ) -> napi::Result<LanguageDetectionResult> {
+        if !self.model.is_multilingual() {
+            return Err(napi::Error::from_reason(
+                "Language detection requires a multilingual model (not .en variants)"
+            ));
+        }
+        
+        let samples = audio::decode_audio_buffer(&buffer)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio buffer: {}", e)))?;
+        
+        let max_samples = (30.0 * self.sampling_rate as f64) as usize;
+        let detection_samples: &[f32] = if samples.len() > max_samples {
+            &samples[..max_samples]
+        } else {
+            &samples
+        };
+        
+        let opts = TranscribeOptions::default();
+        let result = self.transcribe_samples_internal(detection_samples, &opts)?;
+        
+        Ok(LanguageDetectionResult {
+            language: result.language,
+            probability: result.language_probability,
+        })
     }
 
     /// Get the expected sampling rate (16000 Hz for Whisper)
@@ -339,176 +503,73 @@ impl Engine {
     }
 }
 
-/// Read WAV file and return normalized f32 samples in range [-1, 1]
-fn read_wav_samples(path: &str) -> anyhow::Result<Vec<f32>> {
-    let mut file = File::open(path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    parse_wav_buffer(&buffer)
-}
-
-/// Parse WAV buffer and return normalized f32 samples
-fn parse_wav_buffer(buffer: &[u8]) -> anyhow::Result<Vec<f32>> {
-    if buffer.len() < 44 {
-        anyhow::bail!("File too small to be a valid WAV");
-    }
-    
-    // Check for RIFF header
-    if &buffer[0..4] != b"RIFF" || &buffer[8..12] != b"WAVE" {
-        anyhow::bail!("Not a valid WAV file");
-    }
-    
-    // Parse fmt chunk
-    let mut pos = 12;
-    let mut audio_format = 0u16;
-    let mut num_channels = 0u16;
-    let mut sample_rate = 0u32;
-    let mut bits_per_sample = 0u16;
-    
-    while pos + 8 <= buffer.len() {
-        let chunk_id = &buffer[pos..pos+4];
-        let chunk_size = u32::from_le_bytes([
-            buffer[pos+4], buffer[pos+5], buffer[pos+6], buffer[pos+7]
-        ]) as usize;
-        
-        if chunk_id == b"fmt " {
-            if pos + 8 + 16 > buffer.len() {
-                anyhow::bail!("Invalid fmt chunk");
-            }
-            audio_format = u16::from_le_bytes([buffer[pos+8], buffer[pos+9]]);
-            num_channels = u16::from_le_bytes([buffer[pos+10], buffer[pos+11]]);
-            sample_rate = u32::from_le_bytes([
-                buffer[pos+12], buffer[pos+13], buffer[pos+14], buffer[pos+15]
-            ]);
-            bits_per_sample = u16::from_le_bytes([buffer[pos+22], buffer[pos+23]]);
-        } else if chunk_id == b"data" {
-            // Validate format
-            if audio_format != 1 {
-                anyhow::bail!("Only PCM format is supported (got format {})", audio_format);
-            }
-            if sample_rate != 16000 {
-                anyhow::bail!(
-                    "Sample rate must be 16000 Hz (got {} Hz). Please resample your audio.",
-                    sample_rate
-                );
-            }
-            
-            let data_start = pos + 8;
-            let data_end = (data_start + chunk_size).min(buffer.len());
-            let data = &buffer[data_start..data_end];
-            
-            return parse_pcm_samples(data, num_channels, bits_per_sample);
-        }
-        
-        pos += 8 + chunk_size;
-        // Align to 2 bytes
-        if chunk_size % 2 != 0 {
-            pos += 1;
-        }
-    }
-    
-    anyhow::bail!("No data chunk found in WAV file")
-}
-
-/// Parse PCM samples from raw bytes
-fn parse_pcm_samples(data: &[u8], channels: u16, bits_per_sample: u16) -> anyhow::Result<Vec<f32>> {
-    let bytes_per_sample = (bits_per_sample / 8) as usize;
-    let frame_size = bytes_per_sample * channels as usize;
-    
-    let samples: Vec<f32> = match bits_per_sample {
-        16 => {
-            data.chunks(frame_size)
-                .filter_map(|frame| {
-                    if frame.len() >= bytes_per_sample {
-                        // Take first channel (mono) or average for stereo
-                        if channels == 1 {
-                            let sample = i16::from_le_bytes([frame[0], frame[1]]);
-                            Some(sample as f32 / 32768.0)
-                        } else if channels == 2 && frame.len() >= 4 {
-                            // Average left and right channels
-                            let left = i16::from_le_bytes([frame[0], frame[1]]) as f32;
-                            let right = i16::from_le_bytes([frame[2], frame[3]]) as f32;
-                            Some((left + right) / 2.0 / 32768.0)
-                        } else {
-                            // Take first channel for multi-channel
-                            let sample = i16::from_le_bytes([frame[0], frame[1]]);
-                            Some(sample as f32 / 32768.0)
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        24 => {
-            data.chunks(frame_size)
-                .filter_map(|frame| {
-                    if frame.len() >= 3 {
-                        // 24-bit samples need special handling
-                        let sample = ((frame[2] as i32) << 16 | (frame[1] as i32) << 8 | (frame[0] as i32)) as i32;
-                        // Sign extend from 24-bit
-                        let sample = if sample & 0x800000 != 0 {
-                            sample | !0xFFFFFF
-                        } else {
-                            sample
-                        };
-                        Some(sample as f32 / 8388608.0)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        32 => {
-            data.chunks(frame_size)
-                .filter_map(|frame| {
-                    if frame.len() >= 4 {
-                        // Could be 32-bit int or float - assume float for now
-                        let sample = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
-                        Some(sample)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        8 => {
-            data.chunks(frame_size)
-                .filter_map(|frame| {
-                    if !frame.is_empty() {
-                        // 8-bit is unsigned
-                        let sample = (frame[0] as i16 - 128) as f32 / 128.0;
-                        Some(sample)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        _ => {
-            anyhow::bail!("Unsupported bit depth: {} bits", bits_per_sample);
-        }
-    };
-    
-    Ok(samples)
-}
+// ============== Standalone Functions ==============
 
 /// Get list of supported model size aliases
 #[napi]
 pub fn available_models() -> Vec<String> {
-    vec![
-        "tiny".to_string(),
-        "tiny.en".to_string(),
-        "base".to_string(),
-        "base.en".to_string(),
-        "small".to_string(),
-        "small.en".to_string(),
-        "medium".to_string(),
-        "medium.en".to_string(),
-        "large-v1".to_string(),
-        "large-v2".to_string(),
-        "large-v3".to_string(),
-    ]
+    download::available_model_sizes().iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Check if a model is downloaded
+#[napi]
+pub fn is_model_available(size: String) -> bool {
+    download::is_model_downloaded(&size, None)
+}
+
+/// Get the path where a model would be stored
+#[napi]
+pub fn get_model_path(size: String) -> String {
+    download::model_path_for_size(&size, None)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Get the default cache directory for models
+#[napi]
+pub fn get_cache_dir() -> String {
+    download::default_cache_dir()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Download a model (async)
+/// Returns the path to the downloaded model
+#[napi]
+pub async fn download_model(
+    size: String,
+    cache_dir: Option<String>,
+) -> napi::Result<String> {
+    let cache_path = cache_dir.map(std::path::PathBuf::from);
+    
+    let result = download::download_model(
+        &size,
+        cache_path.as_deref(),
+        None::<fn(f64)>,
+    ).await
+        .map_err(|e| napi::Error::from_reason(format!("Download failed: {}", e)))?;
+    
+    Ok(result.to_string_lossy().into_owned())
+}
+
+/// Decode audio file to raw samples (16kHz mono Float32)
+#[napi]
+pub fn decode_audio(path: String) -> napi::Result<Vec<f64>> {
+    let samples = audio::decode_audio_file(&path)
+        .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio: {}", e)))?;
+    
+    Ok(samples.iter().map(|&s| s as f64).collect())
+}
+
+/// Decode audio buffer to raw samples (16kHz mono Float32)
+#[napi]
+pub fn decode_audio_buffer(buffer: napi::bindgen_prelude::Buffer) -> napi::Result<Vec<f64>> {
+    let samples = audio::decode_audio_buffer(&buffer)
+        .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio: {}", e)))?;
+    
+    Ok(samples.iter().map(|&s| s as f64).collect())
 }
 
 /// Format seconds to timestamp string (HH:MM:SS.mmm or MM:SS.mmm)

@@ -7,11 +7,28 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "2.12", features = ["async"] }
+napi = { version = "2.12", features = ["async", "tokio_rt"] }
 napi-derive = "2.12"
 # We use ct2rs to generate safe bindings to the C++ lib
 ct2rs = { version = "0.9.14", features = ["whisper"] } 
 anyhow = "1.0"
+
+# Audio decoding (multi-format support)
+symphonia = { version = "0.5", features = ["mp3", "flac", "ogg", "aac", "wav", "pcm"] }
+
+# Resampling to 16kHz
+rubato = "0.15"
+
+# HTTP for model download
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util"] }
+futures = "0.3"
+
+# Utilities
+dirs = "5.0"
+sha2 = "0.10"
+hex = "0.4"
+serde_json = "1.0"
 
 [build-dependencies]
 napi-build = "2"
