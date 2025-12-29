@@ -101,6 +101,13 @@ export interface TranscribeOptions {
    * If a segment's duration per word exceeds this, it's likely a hallucination
    */
   hallucinationSilenceThreshold?: number
+  /**
+   * Number of parallel processors for transcription (default: 1)
+   * Using more processors can speed up long audio files but may have
+   * reduced accuracy at chunk boundaries.
+   * Note: Word timestamps are not supported when n_processors > 1.
+   */
+  nProcessors?: number
 }
 /** Options for model loading */
 export interface ModelOptions {

@@ -1866,8 +1866,7 @@ dependencies = [
 [[package]]
 name = "whisper-rs"
 version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71ea5d2401f30f51d08126a2d133fee4c1955136519d7ac6cf6f5ac0a91e6bc8"
+source = "git+https://github.com/manmal/whisper-rs.git?branch=fix%2Fadd-full-parallel-api-v2#93588a7abfb621db4e0682e4b7f8dab444590ecd"
 dependencies = [
  "whisper-rs-sys",
 ]
@@ -1875,8 +1874,7 @@ dependencies = [
 [[package]]
 name = "whisper-rs-sys"
 version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e2a6e06e7ac7b8f53c53a5f50bb0bc823ba69b63ecd887339f807a5598bbd2"
+source = "git+https://github.com/manmal/whisper-rs.git?branch=fix%2Fadd-full-parallel-api-v2#93588a7abfb621db4e0682e4b7f8dab444590ecd"
 dependencies = [
  "bindgen",
  "cfg-if",

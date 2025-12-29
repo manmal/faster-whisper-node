@@ -167,6 +167,11 @@ pub struct TranscribeOptions {
     /// Hallucination silence threshold in seconds (default: None)
     /// If a segment's duration per word exceeds this, it's likely a hallucination
     pub hallucination_silence_threshold: Option<f64>,
+    /// Number of parallel processors for transcription (default: 1)
+    /// Using more processors can speed up long audio files but may have 
+    /// reduced accuracy at chunk boundaries.
+    /// Note: Word timestamps are not supported when n_processors > 1.
+    pub n_processors: Option<u32>,
 }
 
 impl Default for TranscribeOptions {
@@ -193,6 +198,7 @@ impl Default for TranscribeOptions {
             vad_filter: None,
             vad_options: None,
             hallucination_silence_threshold: None,
+            n_processors: None,
         }
     }
 }
@@ -322,7 +328,7 @@ impl Engine {
         };
         ctx_params.use_gpu(use_gpu);
         
-        let ctx = WhisperContext::new_with_params(&resolved_path, ctx_params)
+        let ctx = WhisperContext::new_with_params_and_state(&resolved_path, ctx_params)
             .map_err(|e| napi::Error::from_reason(format!("Failed to load model: {}", e)))?;
         
         let num_threads = opts.cpu_threads.unwrap_or(0);
@@ -555,9 +561,25 @@ impl Engine {
         let want_word_timestamps = opts.word_timestamps.unwrap_or(false);
         params.set_token_timestamps(want_word_timestamps);
         
-        // Run transcription
-        state.full(params, &processed_samples)
-            .map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
+        // Check if using parallel processing
+        let n_processors = opts.n_processors.unwrap_or(1);
+        let use_parallel = n_processors > 1;
+        
+        // Note: word timestamps not supported with parallel processing
+        if use_parallel && want_word_timestamps {
+            return Err(napi::Error::from_reason(
+                "Word timestamps are not supported with parallel processing (n_processors > 1)".to_string()
+            ));
+        }
+        
+        // Run transcription (parallel or sequential)
+        if use_parallel {
+            self.ctx.full_parallel(params, &processed_samples, n_processors as i32)
+                .map_err(|e| napi::Error::from_reason(format!("Parallel transcription failed: {}", e)))?;
+        } else {
+            state.full(params, &processed_samples)
+                .map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
+        }
         
         // Build segments from results
         let mut segments = Vec::new();
@@ -565,26 +587,35 @@ impl Engine {
         let use_vad = opts.vad_filter.unwrap_or(false);
         let hallucination_threshold = opts.hallucination_silence_threshold;
         
-        let num_segments = state.full_n_segments();
+        // Get segment count from context (parallel) or state (sequential)
+        let num_segments = if use_parallel {
+            self.ctx.full_n_segments()
+        } else {
+            state.full_n_segments()
+        };
         
         for i in 0..num_segments {
-            let segment = match state.get_segment(i) {
-                Some(s) => s,
-                None => continue,
+            // Get segment data - parallel mode uses context methods, sequential uses state segment API
+            let (raw_text, start_ts, end_ts, segment_for_words) = if use_parallel {
+                let text = self.ctx.full_get_segment_text(i).unwrap_or_default();
+                let start = self.ctx.full_get_segment_t0(i);
+                let end = self.ctx.full_get_segment_t1(i);
+                (text, start, end, None)
+            } else {
+                let segment = match state.get_segment(i) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let text = segment.to_str_lossy().map(|t| t.into_owned()).unwrap_or_default();
+                let start = segment.start_timestamp();
+                let end = segment.end_timestamp();
+                (text, start, end, Some(segment))
             };
             
-            let text = match segment.to_str_lossy() {
-                Ok(t) => t.into_owned(),
-                Err(_) => continue,
-            };
-            
-            let raw_text = text.trim();
+            let raw_text = raw_text.trim();
             if raw_text.is_empty() {
                 continue;
             }
-            
-            let start_ts = segment.start_timestamp();
-            let end_ts = segment.end_timestamp();
             
             // Convert from centiseconds to seconds
             let filtered_segment_start = start_ts as f64 / 100.0;
@@ -600,8 +631,9 @@ impl Engine {
                 (filtered_segment_start, filtered_segment_end)
             };
             
-            // Parse word-level timestamps if enabled
-            let words = if want_word_timestamps {
+            // Parse word-level timestamps if enabled (only in sequential mode)
+            let words = if want_word_timestamps && segment_for_words.is_some() {
+                let segment = segment_for_words.as_ref().unwrap();
                 let num_tokens = segment.n_tokens();
                 
                 let mut words_vec = Vec::new();
@@ -1018,7 +1050,7 @@ impl StreamingEngine {
         };
         ctx_params.use_gpu(use_gpu);
         
-        let ctx = WhisperContext::new_with_params(&resolved_path, ctx_params)
+        let ctx = WhisperContext::new_with_params_and_state(&resolved_path, ctx_params)
             .map_err(|e| napi::Error::from_reason(format!("Failed to load model: {}", e)))?;
         
         let num_threads = opts.cpu_threads.unwrap_or(4);

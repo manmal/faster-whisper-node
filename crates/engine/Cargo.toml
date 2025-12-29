@@ -11,7 +11,8 @@ napi = { version = "2.12", features = ["async", "tokio_rt"] }
 napi-derive = "2.12"
 
 # Whisper.cpp bindings with Metal support for macOS
-whisper-rs = { version = "0.15", features = ["metal", "coreml"] }
+# Using fork with full_parallel API until merged upstream
+whisper-rs = { git = "https://github.com/manmal/whisper-rs.git", branch = "fix/add-full-parallel-api-v2", features = ["metal", "coreml"] }
 
 anyhow = "1.0"
 
