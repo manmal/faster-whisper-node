@@ -1,13 +1,13 @@
-# faster-whisper-node
+# faster-whisper-rs
 
 A pure Node.js/Rust module for Whisper speech-to-text transcription. **No Python runtime required.**
 
 Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engine, the same battle-tested backend that powers [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 
-[![CI](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml/badge.svg)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/faster-whisper-node.svg)](https://www.npmjs.com/package/faster-whisper-node)
+[![CI](https://github.com/manmal/faster-whisper-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/manmal/faster-whisper-rs/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/faster-whisper-rs.svg)](https://www.npmjs.com/package/faster-whisper-rs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/faster-whisper-node.svg)](https://nodejs.org)
+[![Node.js Version](https://img.shields.io/node/v/faster-whisper-rs.svg)](https://nodejs.org)
 
 ## Features
 
@@ -26,9 +26,9 @@ Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engi
 ## Quick Start
 
 ```javascript
-const { Engine, downloadModel, formatTimestamp } = require('faster-whisper-node');
+const { Engine, downloadModel, formatTimestamp } = require('faster-whisper-rs');
 
-// Download a model (one-time, cached in ~/.cache/faster-whisper-node)
+// Download a model (one-time, cached in ~/.cache/faster-whisper-rs)
 await downloadModel('tiny');
 
 // Load model by name
@@ -77,7 +77,7 @@ const result4 = engine.transcribeFile('./audio.wav', {
 });
 
 // GPU auto-detection
-const { isGpuAvailable, getBestDevice } = require('faster-whisper-node');
+const { isGpuAvailable, getBestDevice } = require('faster-whisper-rs');
 console.log(`GPU available: ${isGpuAvailable()}`);
 console.log(`Best device: ${getBestDevice()}`);
 
@@ -105,7 +105,7 @@ const gpuEngine = Engine.withOptions('tiny', { device: 'auto' }); // Uses GPU if
 ## Installation
 
 ```bash
-npm install faster-whisper-node
+npm install faster-whisper-rs
 ```
 
 ### Platform Requirements
@@ -129,7 +129,7 @@ const {
   isModelAvailable,
   getModelPath,
   getCacheDir
-} = require('faster-whisper-node');
+} = require('faster-whisper-rs');
 ```
 
 #### `downloadModel(size: string, cacheDir?: string): Promise<string>`
@@ -137,7 +137,7 @@ const {
 Download a model from HuggingFace Hub. Returns the path to the downloaded model.
 
 ```javascript
-// Download to default cache (~/.cache/faster-whisper-node/models)
+// Download to default cache (~/.cache/faster-whisper-rs/models)
 const path = await downloadModel('tiny');
 
 // Download to custom directory
@@ -170,7 +170,7 @@ Get the cache path for a model size.
 
 ```javascript
 const path = getModelPath('tiny');
-// "/Users/you/.cache/faster-whisper-node/models/tiny"
+// "/Users/you/.cache/faster-whisper-rs/models/tiny"
 ```
 
 #### `getCacheDir(): string`
@@ -179,13 +179,13 @@ Get the default cache directory.
 
 ```javascript
 const cacheDir = getCacheDir();
-// "/Users/you/.cache/faster-whisper-node/models"
+// "/Users/you/.cache/faster-whisper-rs/models"
 ```
 
 ### Audio Decoding
 
 ```javascript
-const { decodeAudio, decodeAudioBuffer } = require('faster-whisper-node');
+const { decodeAudio, decodeAudioBuffer } = require('faster-whisper-rs');
 ```
 
 #### `decodeAudio(path: string): number[]`
@@ -209,7 +209,7 @@ const samples = decodeAudioBuffer(buffer);
 ### Engine
 
 ```typescript
-import { Engine, TranscribeOptions, ModelOptions, TranscriptionResult, Segment } from 'faster-whisper-node';
+import { Engine, TranscribeOptions, ModelOptions, TranscriptionResult, Segment } from 'faster-whisper-rs';
 ```
 
 #### Constructor
@@ -401,7 +401,7 @@ formatTimestamp(3661.5);     // "01:01:01.500"
 ### GPU Detection
 
 ```javascript
-const { isGpuAvailable, getGpuCount, getBestDevice } = require('faster-whisper-node');
+const { isGpuAvailable, getGpuCount, getBestDevice } = require('faster-whisper-rs');
 ```
 
 #### `isGpuAvailable(): boolean`
@@ -527,8 +527,8 @@ npm run benchmark
 
 ```bash
 # Clone
-git clone --recursive https://github.com/manmal/faster-whisper-node
-cd faster-whisper-node
+git clone --recursive https://github.com/manmal/faster-whisper-rs
+cd faster-whisper-rs
 
 # Install dependencies (downloads prebuilt CTranslate2)
 npm install

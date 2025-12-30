@@ -62,7 +62,7 @@ function benchmark(name, fn, iterations = 10) {
 
 // Print system info
 console.log('='.repeat(60));
-console.log('faster-whisper-node Benchmark Suite');
+console.log('faster-whisper-rs Benchmark Suite');
 console.log('='.repeat(60));
 console.log('');
 console.log('System Info:');

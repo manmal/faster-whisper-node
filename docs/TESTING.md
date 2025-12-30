@@ -1,6 +1,6 @@
 # Testing Guide
 
-This guide covers the testing infrastructure for faster-whisper-node.
+This guide covers the testing infrastructure for faster-whisper-rs.
 
 ## Test Structure
 
@@ -73,7 +73,7 @@ git clone --depth 1 https://huggingface.co/Systran/faster-whisper-tiny tiny
 
 Or use the auto-download feature:
 ```javascript
-const { downloadModel } = require('faster-whisper-node');
+const { downloadModel } = require('faster-whisper-rs');
 await downloadModel('tiny');
 ```
 

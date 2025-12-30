@@ -202,7 +202,7 @@ async function getServerStats() {
 // Main
 async function main() {
   console.log('='.repeat(60));
-  console.log('faster-whisper-node Concurrent Stress Test');
+  console.log('faster-whisper-rs Concurrent Stress Test');
   console.log('='.repeat(60));
   console.log(`Server:              ${SERVER_URL}`);
   console.log(`Concurrent requests: ${CONCURRENT_REQUESTS}`);

@@ -1,6 +1,6 @@
 # Stress Tests
 
-Comprehensive stress testing suite for faster-whisper-node.
+Comprehensive stress testing suite for faster-whisper-rs.
 
 ## Available Tests
 

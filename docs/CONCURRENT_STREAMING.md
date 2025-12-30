@@ -1,6 +1,6 @@
 # Concurrent Streaming Transcription
 
-This document describes how to achieve concurrent streaming transcription with `faster-whisper-node`.
+This document describes how to achieve concurrent streaming transcription with `faster-whisper-rs`.
 
 ## Overview
 
@@ -43,7 +43,7 @@ When running multiple workers in parallel, CPU contention affects performance:
 Use `numWorkers` equal to your CPU cores, with `cpuThreadsPerWorker: 1`:
 
 ```javascript
-const { createWorkerPool } = require('faster-whisper-node');
+const { createWorkerPool } = require('faster-whisper-rs');
 
 const pool = createWorkerPool('./models/tiny', {
   numWorkers: 10,          // Equal to CPU cores
@@ -94,7 +94,7 @@ To handle 100 concurrent real-time streams, you need approximately:
 ### WorkerPoolBatcher
 
 ```javascript
-const { createWorkerPool } = require('faster-whisper-node');
+const { createWorkerPool } = require('faster-whisper-rs');
 
 const pool = createWorkerPool(modelPath, {
   numWorkers: 8,           // Number of worker threads
@@ -128,7 +128,7 @@ pool.destroy();
 ### StreamingBatcher (Single Engine)
 
 ```javascript
-const { createBatcher } = require('faster-whisper-node');
+const { createBatcher } = require('faster-whisper-rs');
 
 const batcher = createBatcher(modelPath, {
   maxBatchSize: 8,    // Max chunks to process together

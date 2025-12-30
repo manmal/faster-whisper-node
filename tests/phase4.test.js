@@ -19,7 +19,7 @@ if (!fs.existsSync(audioPath)) {
   process.exit(1);
 }
 
-console.log('Loading faster-whisper-node...');
+console.log('Loading faster-whisper-rs...');
 const { 
   Engine, 
   isGpuAvailable, 

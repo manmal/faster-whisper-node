@@ -1,16 +1,16 @@
 {
-  "name": "faster-whisper-node",
+  "name": "faster-whisper-rs",
   "version": "0.1.0",
   "description": "Fast Whisper speech-to-text for Node.js using CTranslate2. No Python required.",
   "main": "index.js",
   "types": "index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/manmal/faster-whisper-node.git"
+    "url": "git+https://github.com/manmal/faster-whisper-rs.git"
   },
-  "homepage": "https://github.com/manmal/faster-whisper-node#readme",
+  "homepage": "https://github.com/manmal/faster-whisper-rs#readme",
   "bugs": {
-    "url": "https://github.com/manmal/faster-whisper-node/issues"
+    "url": "https://github.com/manmal/faster-whisper-rs/issues"
   },
   "author": "Manuel Maly",
   "license": "MIT",

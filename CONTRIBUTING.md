@@ -1,4 +1,4 @@
-# Contributing to faster-whisper-node
+# Contributing to faster-whisper-rs
 
 Thank you for your interest in contributing!
 
@@ -6,8 +6,8 @@ Thank you for your interest in contributing!
 
 1. **Clone the repository**
    ```bash
-   git clone --recursive https://github.com/manmal/faster-whisper-node
-   cd faster-whisper-node
+   git clone --recursive https://github.com/manmal/faster-whisper-rs
+   cd faster-whisper-rs
    ```
 
 2. **Install prerequisites**

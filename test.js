@@ -19,7 +19,7 @@ if (!fs.existsSync(audioPath)) {
   process.exit(1);
 }
 
-console.log('Loading faster-whisper-node...');
+console.log('Loading faster-whisper-rs...');
 const { 
   Engine, 
   availableModels, 
@@ -63,7 +63,7 @@ console.log('   ✅ Passed');
 console.log('\n📋 Test 3: Model management functions');
 const cacheDir = getCacheDir();
 console.log('   Cache dir:', cacheDir);
-if (!cacheDir.includes('faster-whisper-node')) {
+if (!cacheDir.includes('faster-whisper-rs')) {
   console.error('❌ getCacheDir() should return proper cache path');
   process.exit(1);
 }

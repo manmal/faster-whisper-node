@@ -76,7 +76,7 @@ describe('getCacheDir', () => {
 
   it('should include package name in path', () => {
     const dir = getCacheDir();
-    assert.ok(dir.includes('faster-whisper-node'), 'Should include package name');
+    assert.ok(dir.includes('faster-whisper-rs'), 'Should include package name');
   });
 });
 
